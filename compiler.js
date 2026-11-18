@@ -2491,6 +2491,27 @@ function generateIR(ast) {
   }
 
   if (ast.children) {
+    let hasGlobals = false;
+    ast.children.forEach(n => {
+      if (n.kind === 'GlobalVar') {
+        hasGlobals = true;
+        emitInstr('decl_global', n.name, n.varType, '', n.line, 'B_GLOBALS');
+        if (n.init) {
+          const v = irExpr(n.init, 'B_GLOBALS');
+          emitInstr('assign', n.name, v, '', n.line, 'B_GLOBALS');
+        }
+      } else if (n.kind === 'ArrayDecl') {
+        hasGlobals = true;
+        emitInstr('decl_array', n.name, n.varType, n.size ? irExpr(n.size, 'B_GLOBALS') : '?', n.line, 'B_GLOBALS');
+      } else if (n.kind === 'StructDecl') {
+        hasGlobals = true;
+        emitInstr('decl_struct', n.name || 'anonymous', 'struct', '', n.line, 'B_GLOBALS');
+      } else if (n.kind === 'Typedef') {
+        hasGlobals = true;
+        emitInstr('typedef', n.alias || 'type', n.baseType || 'unknown', '', n.line, 'B_GLOBALS');
+      }
+    });
+
     ast.children.forEach(n => {
       if (n.kind === 'FuncDecl') {
         const entry = 'B_' + n.name; emitInstr('func_begin', n.name, n.returnType, '', n.line, entry);

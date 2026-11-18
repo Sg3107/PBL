@@ -169,11 +169,12 @@ async function runCompiler() {
         source,
         hardenedData: null,
         secReport: mlResult.secReport,
-        orchestration: mlResult.orchestration
+        orchestration: mlResult.orchestration,
+        symbols: mlResult.symbols || []
       };
       lastOrchestration = mlResult.orchestration;
 
-      finishCompile(mlResult.tokens, mlResult.errors, mlResult.semanticErrors, mlResult.secWarnings, mlResult.irInstrs, mlResult.cfgResult, mlResult.secReport, mlResult.orchestration);
+      finishCompile(mlResult.tokens, mlResult.errors, mlResult.semanticErrors, mlResult.secWarnings, mlResult.irInstrs, mlResult.cfgResult, mlResult.secReport, mlResult.orchestration, mlResult.symbols);
 
       if (typeof AgentNetwork !== 'undefined' && AgentNetwork.startNegotiation) {
         AgentNetwork.startNegotiation(source, lastCompile);
@@ -250,12 +251,13 @@ async function runCompiler() {
     source,
     hardenedData,
     secReport,
-    orchestration
+    orchestration,
+    symbols: analyze._lastSymbols || []
   };
   lastOrchestration = orchestration;
 
   // Render all views
-  finishCompile(vis, allErrors, semanticErrors, secWarnings, irInstrs, cfgResult, secReport, orchestration);
+  finishCompile(vis, allErrors, semanticErrors, secWarnings, irInstrs, cfgResult, secReport, orchestration, analyze._lastSymbols || []);
 
   // Trigger Peer-to-Peer Inter-Agent Coordination Bus
   if (typeof AgentNetwork !== 'undefined' && AgentNetwork.startNegotiation) {
@@ -314,7 +316,7 @@ function runLightweightSensing() {
   renderBesideCodeAISensing(sensingData);
 }
 
-function finishCompile(vis, allErrors, semanticErrors, secWarnings, irInstrs, cfgResult, secReport, orchestration) {
+function finishCompile(vis, allErrors, semanticErrors, secWarnings, irInstrs, cfgResult, secReport, orchestration, symbols = null) {
   // Update header and stat bar
   const statTokens = document.getElementById('stat-tokens');
   const statErrors = document.getElementById('stat-errors');
@@ -352,10 +354,11 @@ function finishCompile(vis, allErrors, semanticErrors, secWarnings, irInstrs, cf
   renderBesideCodeAISensing(sensingList);
 
   // Render AST, Tokens, Security, IR, Symbols
+  const activeSymbols = symbols || (lastCompile && lastCompile.symbols) || (typeof analyze !== 'undefined' && analyze._lastSymbols) || [];
   renderTokens(vis);
   renderAST(lastCompile.ast);
   renderIR(irInstrs || [], cfgResult || null, secWarnings);
-  renderSymbols(analyze._lastSymbols || []);
+  renderSymbols(activeSymbols);
 
   if (lastCompile.hardenedData) {
     renderHardenedCode(lastCompile.hardenedData, lastCompile.source);

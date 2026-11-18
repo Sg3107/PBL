@@ -517,6 +517,37 @@
         }
       }
 
+      // 7. Symbol Extraction for IR/CFG & Symbols tab
+      const symbolLog = [];
+      const defRegex2 = /def\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)/g;
+      let dMatch2;
+      while ((dMatch2 = defRegex2.exec(source)) !== null) {
+        const line = source.substring(0, dMatch2.index).split('\n').length;
+        symbolLog.push({ name: dMatch2[1], type: 'def / func', line });
+        const rawParams = dMatch2[2].split(',');
+        for (let p of rawParams) {
+          const pName = p.trim().split(/[:=]/)[0].replace(/^[*]+/, '').trim();
+          if (pName && /^[a-zA-Z_]\w*$/.test(pName)) {
+            symbolLog.push({ name: pName, type: 'param', line });
+          }
+        }
+      }
+      const classRegex2 = /class\s+([a-zA-Z_]\w*)/g;
+      let cMatch2;
+      while ((cMatch2 = classRegex2.exec(source)) !== null) {
+        const line = source.substring(0, cMatch2.index).split('\n').length;
+        symbolLog.push({ name: cMatch2[1], type: 'class', line });
+      }
+      const assignRegex2 = /^\s*([a-zA-Z_]\w*)\s*=(?!=)/gm;
+      let aMatch2;
+      while ((aMatch2 = assignRegex2.exec(source)) !== null) {
+        const line = source.substring(0, aMatch2.index).split('\n').length;
+        if (!symbolLog.some(s => s.name === aMatch2[1])) {
+          symbolLog.push({ name: aMatch2[1], type: 'var', line });
+        }
+      }
+      PythonFrontend._lastSymbols = symbolLog;
+
       return errors;
     },
 
@@ -556,33 +587,48 @@
       let labelCount = 0;
       const newTemp = () => `t${tempCount++}`;
       const newLabel = () => `L${labelCount++}`;
+      let currentBlock = 'B_MAIN';
 
-      instrs.push({ op: 'PY_INIT', arg1: 'Python 3.11 Runtime Frame', arg2: '', res: '' });
+      const emit = (op, result = '', arg1 = '', arg2 = '', line = 1, bid = currentBlock) => {
+        instrs.push({ op, result, res: result, arg1: String(arg1 || ''), arg2: String(arg2 || ''), line, blockId: bid });
+        return result;
+      };
 
-      for (const node of ast.children) {
+      emit('PY_INIT', '', 'Python 3.11 Runtime Frame', '', 1, 'B_INIT');
+
+      for (const node of (ast.children || [])) {
         if (node.kind === 'FuncDecl') {
-          instrs.push({ op: 'FUNC_BEGIN', arg1: node.name, arg2: '', res: '' });
-          instrs.push({ op: 'ALLOC_SCOPE', arg1: (node.params || []).map(p => p.name).join(','), arg2: '', res: '' });
-          instrs.push({ op: 'FUNC_END', arg1: node.name, arg2: '', res: '' });
+          const bFunc = 'B_' + node.name;
+          emit('FUNC_BEGIN', node.name, node.returnType || 'dynamic', '', node.line || 1, bFunc);
+          if (node.params && node.params.length > 0) {
+            emit('ALLOC_SCOPE', '', node.params.map(p => p.name).join(','), '', node.line || 1, bFunc);
+          }
+          emit('FUNC_END', node.name, '', '', node.line || 1, bFunc);
         } else if (node.kind === 'VarDecl') {
           const t = newTemp();
-          instrs.push({ op: 'ASSIGN', arg1: node.init?.value || '0', arg2: '', res: t });
-          instrs.push({ op: 'STORE', arg1: t, arg2: '', res: node.name });
+          emit('ASSIGN', t, node.init?.value || '0', '', node.line || 1, currentBlock);
+          emit('STORE', node.name, t, '', node.line || 1, currentBlock);
         } else if (node.kind === 'Call' && node.callee === 'print') {
-          instrs.push({ op: 'PARAM', arg1: node.args[0]?.value || '', arg2: '', res: '' });
-          instrs.push({ op: 'CALL', arg1: 'sys.stdout.write', arg2: '1', res: 'void' });
+          emit('PARAM', '', node.args?.[0]?.value || '', '', node.line || 1, currentBlock);
+          emit('CALL', 'void', 'sys.stdout.write', '1', node.line || 1, currentBlock);
         } else if (node.kind === 'For') {
           const lStart = newLabel();
           const lEnd = newLabel();
-          instrs.push({ op: 'ITER_INIT', arg1: node.rangeArgs, arg2: '', res: node.iterVar });
-          instrs.push({ op: 'LABEL', arg1: lStart, arg2: '', res: '' });
-          instrs.push({ op: 'IF_EXHAUSTED', arg1: node.iterVar, arg2: lEnd, res: '' });
-          instrs.push({ op: 'GOTO', arg1: lStart, arg2: '', res: '' });
-          instrs.push({ op: 'LABEL', arg1: lEnd, arg2: '', res: '' });
+          emit('ITER_INIT', node.iterVar || 'i', node.rangeArgs || 'range()', '', node.line || 1, currentBlock);
+          emit('LABEL', lStart, '', '', node.line || 1, currentBlock);
+          emit('IF_EXHAUSTED', '', node.iterVar || 'i', lEnd, node.line || 1, currentBlock);
+          emit('GOTO', lStart, '', '', node.line || 1, currentBlock);
+          emit('LABEL', lEnd, '', '', node.line || 1, currentBlock);
+        } else if (node.kind === 'If') {
+          const lThen = newLabel();
+          const lEnd = newLabel();
+          emit('BRANCH', lThen, node.condition || 'cond', lEnd, node.line || 1, currentBlock);
+        } else if (node.kind === 'ExprStmt') {
+          emit('EXPR_EVAL', '', node.expr || '', '', node.line || 1, currentBlock);
         }
       }
 
-      instrs.push({ op: 'PY_TERMINATE', arg1: 'exitCode 0', arg2: '', res: '' });
+      emit('PY_TERMINATE', 'exitCode 0', '', '', 1, currentBlock);
       return instrs;
     },
 
@@ -780,6 +826,32 @@
         });
       }
 
+      // Symbol Extraction for IR/CFG & Symbols tab
+      const symbolLog = [];
+      const clsRegex = /(?:class|struct)\s+([a-zA-Z_]\w*)/g;
+      let cm;
+      while ((cm = clsRegex.exec(source)) !== null) {
+        const line = source.substring(0, cm.index).split('\n').length;
+        symbolLog.push({ name: cm[1], type: 'class/struct', line });
+      }
+      const fnRegex = /\b(int|void|float|double|char|bool|auto|string)\s+([a-zA-Z_]\w*)\s*\([^)]*\)\s*\{/g;
+      let fm;
+      while ((fm = fnRegex.exec(source)) !== null) {
+        const line = source.substring(0, fm.index).split('\n').length;
+        symbolLog.push({ name: fm[2], type: fm[1] + ' (func)', line });
+      }
+      const varRegex = /\b(int|float|double|char|bool|string|auto|[A-Z]\w*)\s+([a-zA-Z_]\w*)\s*(?:=|;|\()/g;
+      let vm;
+      while ((vm = varRegex.exec(source)) !== null) {
+        if (vm[2] !== 'main' && vm[2] !== 'if' && vm[2] !== 'while' && vm[2] !== 'for' && vm[2] !== 'return') {
+          const line = source.substring(0, vm.index).split('\n').length;
+          if (!symbolLog.some(s => s.name === vm[2])) {
+            symbolLog.push({ name: vm[2], type: vm[1], line });
+          }
+        }
+      }
+      CppFrontend._lastSymbols = symbolLog;
+
       return errors;
     },
 
@@ -817,26 +889,34 @@
       const instrs = [];
       let temp = 0;
       const newT = () => `t${temp++}`;
+      let currentBlock = 'B_MAIN';
 
-      instrs.push({ op: 'CPP_INIT', arg1: 'C++17 OOP V-Table ABI', arg2: '', res: '' });
+      const emit = (op, result = '', arg1 = '', arg2 = '', line = 1, bid = currentBlock) => {
+        instrs.push({ op, result, res: result, arg1: String(arg1 || ''), arg2: String(arg2 || ''), line, blockId: bid });
+        return result;
+      };
 
-      for (const node of ast.children) {
+      emit('CPP_INIT', '', 'C++17 OOP V-Table ABI', '', 1, 'B_INIT');
+
+      for (const node of (ast.children || [])) {
         if (node.kind === 'ClassDecl') {
-          instrs.push({ op: 'CLASS_DEF', arg1: node.name, arg2: '', res: '' });
+          const bClass = 'B_' + node.name;
+          emit('CLASS_DEF', node.name, '', '', node.line || 1, bClass);
           for (const m of (node.members || [])) {
-            instrs.push({ op: 'METHOD_BIND', arg1: `${node.name}::${m.name}`, arg2: 'this', res: '' });
+            emit('METHOD_BIND', `${node.name}::${m.name}`, 'this', '', m.line || node.line || 1, bClass);
           }
         } else if (node.kind === 'StreamOutput') {
           const t = newT();
-          instrs.push({ op: 'STREAM_EVAL', arg1: node.expr, arg2: '', res: t });
-          instrs.push({ op: 'OSTREAM_WRITE', arg1: 'std::cout', arg2: t, res: '' });
+          emit('STREAM_EVAL', t, node.expr || '', '', node.line || 1, currentBlock);
+          emit('OSTREAM_WRITE', 'std::cout', t, '', node.line || 1, currentBlock);
         } else if (node.kind === 'FuncDecl') {
-          instrs.push({ op: 'FUNC_BEGIN', arg1: node.name, arg2: '', res: '' });
-          instrs.push({ op: 'FUNC_END', arg1: node.name, arg2: '', res: '' });
+          const bFunc = 'B_' + node.name;
+          emit('FUNC_BEGIN', node.name, node.returnType || 'int', '', node.line || 1, bFunc);
+          emit('FUNC_END', node.name, '', '', node.line || 1, bFunc);
         }
       }
 
-      instrs.push({ op: 'CPP_TERMINATE', arg1: 'exitCode 0', arg2: '', res: '' });
+      emit('CPP_TERMINATE', 'exitCode 0', '', '', 1, currentBlock);
       return instrs;
     },
 
@@ -1100,6 +1180,32 @@
         }
       }
 
+      // Symbol Extraction for IR/CFG & Symbols tab
+      const symbolLog = [];
+      const jClsRegex = /\bclass\s+([a-zA-Z_]\w*)/g;
+      let jcm;
+      while ((jcm = jClsRegex.exec(source)) !== null) {
+        const line = source.substring(0, jcm.index).split('\n').length;
+        symbolLog.push({ name: jcm[1], type: 'class', line });
+      }
+      const jMthRegex = /\b(?:public|private|protected|static|\s)+([a-zA-Z_]\w*)\s+([a-zA-Z_]\w*)\s*\([^)]*\)\s*\{/g;
+      let jmm;
+      while ((jmm = jMthRegex.exec(source)) !== null) {
+        if (jmm[2] !== 'class') {
+          const line = source.substring(0, jmm.index).split('\n').length;
+          symbolLog.push({ name: jmm[2], type: jmm[1] + ' (method)', line });
+        }
+      }
+      const jVarRegex = /\b(int|float|double|char|boolean|String)\s+([a-zA-Z_]\w*)\s*(?:=|;)/g;
+      let jvm;
+      while ((jvm = jVarRegex.exec(source)) !== null) {
+        const line = source.substring(0, jvm.index).split('\n').length;
+        if (!symbolLog.some(s => s.name === jvm[2])) {
+          symbolLog.push({ name: jvm[2], type: jvm[1], line });
+        }
+      }
+      JavaFrontend._lastSymbols = symbolLog;
+
       return errors;
     },
 
@@ -1123,21 +1229,29 @@
 
     generateIR(ast) {
       const instrs = [];
-      instrs.push({ op: 'JVM_BOOTSTRAP', arg1: 'Java 17 ClassLoader', arg2: '', res: '' });
+      let currentBlock = 'B_MAIN';
 
-      for (const node of ast.children) {
+      const emit = (op, result = '', arg1 = '', arg2 = '', line = 1, bid = currentBlock) => {
+        instrs.push({ op, result, res: result, arg1: String(arg1 || ''), arg2: String(arg2 || ''), line, blockId: bid });
+        return result;
+      };
+
+      emit('JVM_BOOTSTRAP', '', 'Java 17 ClassLoader', '', 1, 'B_BOOT');
+
+      for (const node of (ast.children || [])) {
         if (node.kind === 'ClassDecl') {
-          instrs.push({ op: 'CLASS_LOAD', arg1: node.name, arg2: '', res: '' });
+          const bClass = 'B_' + node.name;
+          emit('CLASS_LOAD', node.name, '', '', node.line || 1, bClass);
           for (const m of (node.members || [])) {
-            instrs.push({ op: 'INVOKE_STATIC', arg1: `${node.name}.${m.name}`, arg2: '(String[])V', res: '' });
+            emit('INVOKE_STATIC', `${node.name}.${m.name}`, '(String[])V', '', m.line || node.line || 1, bClass);
           }
         } else if (node.kind === 'PrintCall') {
-          instrs.push({ op: 'GETSTATIC', arg1: 'java/lang/System.out', arg2: 'Ljava/io/PrintStream;', res: '' });
-          instrs.push({ op: 'INVOKEVIRTUAL', arg1: 'java/io/PrintStream.println', arg2: node.expr, res: '' });
+          emit('GETSTATIC', 'Ljava/io/PrintStream;', 'java/lang/System.out', '', node.line || 1, currentBlock);
+          emit('INVOKEVIRTUAL', 'java/io/PrintStream.println', node.expr || '', '', node.line || 1, currentBlock);
         }
       }
 
-      instrs.push({ op: 'JVM_RETURN', arg1: 'exit 0', arg2: '', res: '' });
+      emit('JVM_RETURN', 'exit 0', '', '', 1, currentBlock);
       return instrs;
     },
 
@@ -1553,7 +1667,8 @@
         irInstrs,
         cfgResult,
         secReport,
-        orchestration
+        orchestration,
+        symbols: frontend._lastSymbols || []
       };
     },
 
