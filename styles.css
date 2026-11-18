@@ -1385,9 +1385,23 @@ input[type="radio"] { display: none; }
   grid-template-columns: 1fr 1fr;
   gap: 14px;
   padding: 14px;
+  width: 100%;
+  box-sizing: border-box;
 }
-@media(max-width: 768px) { .split-ast-grid { grid-template-columns: 1fr; } }
-.ast-col, .token-col { display: flex; flex-direction: column; }
+@media(max-width: 900px) { .split-ast-grid { grid-template-columns: 1fr; } }
+.ast-col, .token-col { display: flex; flex-direction: column; min-width: 0; }
+.ir-scroll-wrap, .sym-scroll-wrap {
+  padding: 14px;
+  overflow-y: auto;
+  max-height: 520px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+}
 
 /* ════════════════════════════════════════════════════
    AGENTIC AI SECURITY SHIELD (AAISecShield) STYLES

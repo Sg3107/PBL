@@ -84,6 +84,13 @@ function switchTab(name, isUserClick = false) {
   if (name === 'aai-shield') {
     setTimeout(initAAILossChartIfNeeded, 50);
   }
+  if (name === 'ir' && lastCompile) {
+    const activeSymbols = (lastCompile.symbols && lastCompile.symbols.length > 0)
+      ? lastCompile.symbols
+      : (typeof analyze !== 'undefined' && analyze._lastSymbols) || [];
+    renderIR(lastCompile.irInstrs || [], lastCompile.cfgResult || null, lastCompile.secWarnings || []);
+    renderSymbols(activeSymbols);
+  }
 }
 
 const DEFAULT_ENV_GROQ_KEY = '';
@@ -355,13 +362,33 @@ function finishCompile(vis, allErrors, semanticErrors, secWarnings, irInstrs, cf
 
   // Render AST, Tokens, Security, IR, Symbols
   const activeSymbols = symbols || (lastCompile && lastCompile.symbols) || (typeof analyze !== 'undefined' && analyze._lastSymbols) || [];
-  renderTokens(vis);
-  renderAST(lastCompile.ast);
-  renderIR(irInstrs || [], cfgResult || null, secWarnings);
-  renderSymbols(activeSymbols);
+  try {
+    renderTokens(vis);
+  } catch (errTokens) {
+    console.error('[NeuralCC] renderTokens error:', errTokens);
+  }
+  try {
+    renderAST(lastCompile.ast);
+  } catch (errAST) {
+    console.error('[NeuralCC] renderAST error:', errAST);
+  }
+  try {
+    renderIR(irInstrs || [], cfgResult || null, secWarnings);
+  } catch (errIR) {
+    console.error('[NeuralCC] renderIR error:', errIR);
+  }
+  try {
+    renderSymbols(activeSymbols);
+  } catch (errSym) {
+    console.error('[NeuralCC] renderSymbols error:', errSym);
+  }
 
   if (lastCompile.hardenedData) {
-    renderHardenedCode(lastCompile.hardenedData, lastCompile.source);
+    try {
+      renderHardenedCode(lastCompile.hardenedData, lastCompile.source);
+    } catch (errHard) {
+      console.error('[NeuralCC] renderHardenedCode error:', errHard);
+    }
   }
 
   updateTabBadges(allErrors.length, secWarnings.length, sensingList.length);
@@ -917,13 +944,14 @@ function renderIR(instrs, cfgResult, secWarnings) {
   const el = document.getElementById('irView');
   if (!el) return;
   if (!instrs || !instrs.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">⟐</div>No IR generated — compile valid code first</div>';
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">⟐</div>No IR generated — compile code first</div>';
     return;
   }
   const blockMap = new Map();
   instrs.forEach(ins => {
-    if (!blockMap.has(ins.blockId)) blockMap.set(ins.blockId, []);
-    blockMap.get(ins.blockId).push(ins);
+    const bid = ins.blockId || 'B_ENTRY';
+    if (!blockMap.has(bid)) blockMap.set(bid, []);
+    blockMap.get(bid).push(ins);
   });
   let html = '', addr = 0;
   blockMap.forEach((binstr, bid) => {
@@ -943,10 +971,21 @@ function renderIR(instrs, cfgResult, secWarnings) {
 function renderSymbols(symbols) {
   const el = document.getElementById('symbolView');
   if (!el) return;
-  if (!symbols.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊞</div>Symbol table empty</div>';
+  if (!symbols || !symbols.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊞</div>Symbol table empty — compile code to resolve identifiers</div>';
   } else {
-    el.innerHTML = `<div class="sym-scope"><table class="sym-table"><thead><tr><th>Identifier</th><th>Type</th><th>Line</th></tr></thead><tbody>${symbols.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.returnType || s.type)}</td><td>L${s.line}</td></tr>`).join('')}</tbody></table></div>`;
+    el.innerHTML = `
+      <div class="sym-scope">
+        <div class="sym-scope-head">SEMANTIC SCOPE SYMBOLS (${symbols.length} IDENTIFIERS)</div>
+        <table class="sym-table">
+          <thead>
+            <tr><th>Identifier</th><th>Type</th><th>Line</th></tr>
+          </thead>
+          <tbody>
+            ${symbols.map(s => `<tr><td><span class="sym-kind-var">${esc(s.name)}</span></td><td><span class="sym-type">${esc(s.returnType || s.type || 'var')}</span></td><td><span class="sym-line">L${s.line || 1}</span></td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
   }
 }
 
