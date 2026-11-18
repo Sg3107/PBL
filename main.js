@@ -1449,9 +1449,11 @@ async function startAAINeuralTraining() {
     btnTrain.textContent = '⏳ Training in Progress...';
   }
   if (logBox) {
+    const nTrain = AAISecShield?.SHIELD_DATASET?.train?.length || 80;
+    const nVal = AAISecShield?.SHIELD_DATASET?.val?.length || 20;
     logBox.textContent = `[DL ENGINE] Initializing Stochastic Gradient Descent...\n` +
-      `[DATASET] 24 Train Samples, 8 Validation Samples\n` +
-      `[HYPERPARAMS] Epochs: ${epochs}, Learning Rate: ${lr}, Optimizer: SGD\n` +
+      `[DATASET] ${nTrain} Train Samples, ${nVal} Validation Samples (${nTrain + nVal} Benchmark Vectors)\n` +
+      `[HYPERPARAMS] Epochs: ${epochs}, Learning Rate: ${lr}, Optimizer: SGD (BCE Loss)\n` +
       `----------------------------------------\n`;
   }
 
