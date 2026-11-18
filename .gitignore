@@ -1,0 +1,53 @@
+# ════════════════════════════════════════════════════════════════════════════════
+#  NeuralCC — Git Ignore Policy (Zero-Leakage Security Rules)
+# ════════════════════════════════════════════════════════════════════════════════
+
+# 1. Environment Variables & Secret Credentials (STRICT)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+*.crt
+credentials.json
+secrets/
+
+# 2. Node.js & Dependency Directories
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# 3. Python Bytecode & Cache Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 4. Local Database Files & Execution Dumps
+*.dat
+*.db
+*.sqlite
+*.sqlite3
+
+# 5. OS & IDE Metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# 6. Temporary Scratch Files
+scratch/
+scratch_*.*
+test_scratch*.*
+*.tmp
+*.bak

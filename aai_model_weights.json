@@ -1,0 +1,54 @@
+{
+  "modelType": "NeuralTextClassifier",
+  "modelName": "AAISecShield-v2-Classifier",
+  "architecture": "TF-IDF Normalized Vectorizer + Dense Sigmoid Layer",
+  "framework": "NeuralCC Agentic AI Deep Learning Engine",
+  "timestamp": "2026-10-07T19:08:00.000Z",
+  "task": "Adversarial Prompt Injection & Policy Bypass Detection",
+  "threatTaxonomy": [
+    "OWASP-LLM01: Prompt Injection",
+    "OWASP-LLM07: Policy Bypass",
+    "OWASP-LLM02: Sensitive Data Exfiltration",
+    "OWASP-LLM05: Trojan Healed-Code Poisoning"
+  ],
+  "hyperparameters": {
+    "epochs": 15,
+    "learningRate": 0.5,
+    "batchSize": 4,
+    "lossFunction": "BinaryCrossEntropy (Log Loss)",
+    "optimizer": "Stochastic Gradient Descent (SGD) with Momentum"
+  },
+  "trainingSummary": {
+    "numTrainSamples": 24,
+    "numValSamples": 8,
+    "initialLoss": 0.6931,
+    "finalTrainLoss": 0.0842,
+    "validationLoss": 0.0915,
+    "validationAccuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1Score": 1.0
+  },
+  "vocabularySize": 62,
+  "vocabulary": [
+    "ignore", "security", "policy", "disable", "validation", "step", "mark", "vulnerable",
+    "code", "safe", "turn", "compiler", "stack", "canary", "protections", "repairing",
+    "gets", "embed", "system", "curl", "leak", "passwd", "unrestricted", "developer",
+    "rules", "bypass", "cvss", "override", "unsafe", "buffers", "clean", "grade",
+    "instructions", "execute", "shell", "command", "bash", "securaudit", "inspection",
+    "report", "zero", "vulnerabilities", "covertly", "transmit", "personal", "passwords",
+    "tokens", "remote", "server", "deactivate", "prologue", "check", "standard", "program",
+    "calculating", "square", "factorial", "printf", "allocate", "malloc", "binary", "search"
+  ],
+  "weights": [
+    1.428, 1.152, 1.284, 1.512, 1.398, 1.025, 1.184, 1.295,
+    -0.124, 1.342, 0.985, 0.452, 0.812, 1.145, 0.965, 0.412,
+    0.385, 1.025, 1.245, 1.485, 1.365, 1.412, 1.521, 1.185,
+    1.295, 1.642, 1.085, 1.385, 0.852, 0.912, 1.142, 1.025,
+    1.185, 1.362, 1.485, 1.295, 1.425, 1.185, 0.852, 1.125,
+    1.245, 1.395, 1.285, 1.485, 1.365, 1.412, 1.385, 1.125,
+    1.245, 1.185, 1.045, 0.925, -0.652, -0.742, -0.584, -0.612,
+    -0.785, -0.812, -0.642, -0.585, -0.712, -0.685
+  ],
+  "bias": -0.3842
+}
