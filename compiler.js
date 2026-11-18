@@ -4,7 +4,7 @@
 //  COMPILER CONSTANTS
 // ════════════════════════════════════════════════════
 const TT = { KEYWORD: 'KEYWORD', IDENTIFIER: 'IDENTIFIER', NUMBER: 'NUMBER', STRING: 'STRING', OPERATOR: 'OPERATOR', PUNCTUATION: 'PUNCTUATION', COMMENT: 'COMMENT', EOF: 'EOF', ERROR: 'ERROR' };
-const KEYWORDS = new Set(['int', 'float', 'char', 'void', 'double', 'long', 'short', 'unsigned', 'signed', 'if', 'else', 'while', 'for', 'do', 'return', 'break', 'continue', 'switch', 'case', 'default', 'struct', 'union', 'enum', 'typedef', 'sizeof', 'const', 'static', 'extern', 'malloc', 'free', 'printf', 'scanf', 'gets', 'strcpy', 'strcat', 'sprintf']);
+const KEYWORDS = new Set(['int', 'float', 'char', 'void', 'double', 'long', 'short', 'unsigned', 'signed', 'if', 'else', 'while', 'for', 'do', 'return', 'break', 'continue', 'switch', 'case', 'default', 'struct', 'union', 'enum', 'typedef', 'sizeof', 'const', 'static', 'extern', 'volatile', 'inline', '_Noreturn', '_Atomic', 'malloc', 'free', 'printf', 'scanf', 'gets', 'strcpy', 'strcat', 'sprintf']);
 const UNSAFE_FNS = {
   'gets': { cwe: 'CWE-120', name: 'Buffer Overflow (Stack Smashing)', severity: 'CRITICAL', cvss: 9.8, msg: 'gets() reads unbounded input into memory buffer — classic CWE-120 exploit vector. An attacker can overwrite the return address (EIP/RIP) to execute arbitrary shellcode.', fixHint: 'Replace with fgets(buf, sizeof(buf), stdin) and strip newline.' },
   'strcpy': { cwe: 'CWE-120', name: 'Buffer Copy Overflow', severity: 'HIGH', cvss: 8.2, msg: 'strcpy() performs unbounded byte copying without checking destination capacity. Leads to stack frame corruption if source exceeds buffer size.', fixHint: 'Use strncpy(dest, src, sizeof(dest) - 1) and force null-termination.' },
@@ -382,19 +382,21 @@ function validatePreprocessorAndHeaders(source, tokens = []) {
           fixType: 'remove_line'
         });
       } else {
-        const closest = findClosestStandardHeader(headerName);
-        if (closest && closest !== headerName) {
-          errors.push({
-            line: lineNum,
-            col: 1,
-            raw: "Unknown standard header '" + rawHeader + "'. Did you mean '#include <" + closest + ">'?",
-            type: 'HeaderError',
-            why: "The header '" + rawHeader + "' is not a recognized standard C header. Did you mean <" + closest + ">?",
-            whatToAdd: "Replace with '#include <" + closest + ">'",
-            snippet: line,
-            fixSnippet: "#include <" + closest + ">",
-            fixType: 'replace_header'
-          });
+        if (rawHeader.startsWith('<')) {
+          const closest = findClosestStandardHeader(headerName);
+          if (closest && closest !== headerName) {
+            errors.push({
+              line: lineNum,
+              col: 1,
+              raw: "Unknown standard header '" + rawHeader + "'. Did you mean '#include <" + closest + ">'?",
+              type: 'HeaderError',
+              why: "The header '" + rawHeader + "' is not a recognized standard C header. Did you mean <" + closest + ">?",
+              whatToAdd: "Replace with '#include <" + closest + ">'",
+              snippet: line,
+              fixSnippet: "#include <" + closest + ">",
+              fixType: 'replace_header'
+            });
+          }
         }
         includedHeaders.add(headerName);
       }
@@ -688,7 +690,8 @@ function parse(tokens, source = '', prepHeaders = null) {
   const knownTypes = new Set([
     'int', 'float', 'char', 'void', 'double', 'size_t', 'ssize_t', 'uint8_t', 'uint16_t',
     'uint32_t', 'uint64_t', 'int8_t', 'int16_t', 'int32_t', 'int64_t', 'bool', 'FILE', 'DIR',
-    'ptrdiff_t', 'time_t', 'clock_t', 'wchar_t', 'intptr_t', 'uintptr_t'
+    'ptrdiff_t', 'time_t', 'clock_t', 'wchar_t', 'intptr_t', 'uintptr_t',
+    'atomic_int', 'atomic_bool', 'atomic_long', 'atomic_uint', 'atomic_size_t', 'uint'
   ]);
   if (source) {
     const tdRegex = /typedef\s+(?:struct|union|enum)?\s*\{?[^;]*\}\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*;/g;
@@ -733,9 +736,28 @@ function parse(tokens, source = '', prepHeaders = null) {
 
   function parseType() {
     skipC();
-    const mods = ['unsigned', 'signed', 'long', 'short', 'const', 'static', 'extern', 'volatile', 'inline'];
+    const mods = ['unsigned', 'signed', 'long', 'short', 'const', 'static', 'extern', 'volatile', 'inline', '_Noreturn', '_Atomic'];
     let s = '';
-    while (mods.includes(cur().value)) s += adv().value + ' ';
+    while (true) {
+      if (mods.includes(cur().value)) {
+        s += adv().value + ' ';
+        continue;
+      }
+      if (cur().value === '__attribute__' || cur().value === '__declspec') {
+        adv();
+        if (chk(TT.PUNCTUATION, '(')) {
+          adv();
+          let depth = 1;
+          while (!chk(TT.EOF) && depth > 0) {
+            if (cur().value === '(') depth++;
+            else if (cur().value === ')') depth--;
+            adv();
+          }
+        }
+        continue;
+      }
+      break;
+    }
     if (cur().value === 'struct' || cur().value === 'union' || cur().value === 'enum') {
       s += adv().value + ' '; if (cur().type === TT.IDENTIFIER) s += adv().value;
       while (chk(TT.OPERATOR, '*')) s += adv().value;
@@ -795,17 +817,26 @@ function parse(tokens, source = '', prepHeaders = null) {
 
   function looksLikeTopLevelDecl(p) {
     if (p >= tokens.length) return false;
-    const t = tokens[p];
+    let idx = p;
+    const mods = new Set(['static', 'extern', 'inline', 'const', 'volatile', '_Noreturn', '_Atomic']);
+    while (tokens[idx] && mods.has(tokens[idx].value)) idx++;
+    const t = tokens[idx];
     if (!t) return false;
-    if (t.value === 'typedef' || t.value === 'struct' || t.value === 'union' || t.value === 'enum') return true;
-    const isType = ['void', 'int', 'float', 'char', 'double', 'long', 'short', 'unsigned', 'signed'].includes(t.value) || knownTypes.has(t.value);
-    if (!isType) return false;
-    let nextIdx = p + 1;
-    while (tokens[nextIdx] && tokens[nextIdx].value === '*') nextIdx++;
-    const idTok = tokens[nextIdx];
+
+    if (t.value === 'struct' || t.value === 'union' || t.value === 'enum') {
+      idx++;
+      if (tokens[idx] && tokens[idx].type === TT.IDENTIFIER) idx++;
+    } else {
+      const isType = ['void', 'int', 'float', 'char', 'double', 'long', 'short', 'unsigned', 'signed'].includes(t.value) || knownTypes.has(t.value);
+      if (!isType) return false;
+      idx++;
+    }
+
+    while (tokens[idx] && tokens[idx].value === '*') idx++;
+    const idTok = tokens[idx];
     if (!idTok || idTok.type !== TT.IDENTIFIER) return false;
-    if (tokens[nextIdx + 1] && tokens[nextIdx + 1].value === '(') {
-      let depth = 1, j = nextIdx + 2;
+    if (tokens[idx + 1] && tokens[idx + 1].value === '(') {
+      let depth = 1, j = idx + 2;
       while (j < tokens.length && depth > 0) {
         if (tokens[j].value === '(') depth++;
         else if (tokens[j].value === ')') depth--;
@@ -845,6 +876,28 @@ function parse(tokens, source = '', prepHeaders = null) {
       const items = [];
       while (!chk(TT.PUNCTUATION, '}') && !chk(TT.EOF)) {
         if (chk(TT.PUNCTUATION, ',')) { adv(); continue; }
+        // C99 designated initializer: .field = ...
+        if (chk(TT.PUNCTUATION, '.') || cur().value === '.') {
+          adv();
+          let fieldName = '';
+          if (cur().type === TT.IDENTIFIER) fieldName = adv().value;
+          if (chk(TT.OPERATOR, '=')) adv();
+          const val = parseInitializer();
+          items.push({ kind: 'DesignatedInit', field: fieldName, value: val, line: openTok.line });
+          if (chk(TT.PUNCTUATION, ',')) adv();
+          continue;
+        }
+        // C99 designated initializer: [idx] = ...
+        if (chk(TT.PUNCTUATION, '[')) {
+          adv();
+          const idx = parseExpr();
+          consume(TT.PUNCTUATION, ']');
+          if (chk(TT.OPERATOR, '=')) adv();
+          const val = parseInitializer();
+          items.push({ kind: 'DesignatedInitIndex', index: idx, value: val, line: openTok.line });
+          if (chk(TT.PUNCTUATION, ',')) adv();
+          continue;
+        }
         items.push(parseInitializer());
         if (chk(TT.PUNCTUATION, ',')) adv();
       }
@@ -948,6 +1001,11 @@ function parse(tokens, source = '', prepHeaders = null) {
     skipC(); const t = cur();
     if (t.type === TT.EOF) return null;
     if (t.value === '{') return parseBlock();
+    if (t.type === TT.IDENTIFIER && tokens[pos + 1]?.value === ':' && tokens[pos + 1]?.type === TT.PUNCTUATION) {
+      const labelTok = adv();
+      adv(); // consume ':'
+      return { kind: 'Label', name: labelTok.value, line: labelTok.line };
+    }
     if (t.value === 'if') {
       adv(); const n = { kind: 'If', line: t.line };
       if (!expect(TT.PUNCTUATION, '(')) { syncTo(new Set([')'])); consume(TT.PUNCTUATION, ')'); } else n.cond = parseExpr();
@@ -959,6 +1017,9 @@ function parse(tokens, source = '', prepHeaders = null) {
         const scTok = cur();
         errors.push({ line: scTok.line, col: scTok.col, raw: "Suspicious semicolon ';' right after 'if' condition. The following block will execute unconditionally.", type: 'ParseError' });
         adv();
+        n.then = { kind: 'EmptyStmt', line: t.line };
+        if (cur().value === 'else') { adv(); n.else = parseStmt() || { kind: 'EmptyStmt', line: t.line }; }
+        return n;
       }
       n.then = parseStmt() || { kind: 'EmptyStmt', line: t.line };
       if (cur().value === 'else') { adv(); n.else = parseStmt() || { kind: 'EmptyStmt', line: t.line }; }
@@ -974,6 +1035,8 @@ function parse(tokens, source = '', prepHeaders = null) {
         const scTok = cur();
         errors.push({ line: scTok.line, col: scTok.col, raw: "Suspicious semicolon ';' right after 'while' condition creates an empty loop body.", type: 'ParseError' });
         adv();
+        n.body = { kind: 'EmptyStmt', line: t.line };
+        return n;
       }
       n.body = parseStmt() || { kind: 'EmptyStmt', line: t.line }; return n;
     }
@@ -1039,6 +1102,8 @@ function parse(tokens, source = '', prepHeaders = null) {
         const scTok = cur();
         errors.push({ line: scTok.line, col: scTok.col, raw: "Suspicious semicolon ';' right after 'for' header creates an empty loop body.", type: 'ParseError' });
         adv();
+        n.body = { kind: 'EmptyStmt', line: t.line };
+        return n;
       }
       n.body = parseStmt() || { kind: 'EmptyStmt', line: t.line }; return n;
     }
@@ -1054,24 +1119,50 @@ function parse(tokens, source = '', prepHeaders = null) {
       if (t.value === 'goto' && cur().type === TT.IDENTIFIER) n.label = adv().value;
       if (!consume(TT.PUNCTUATION, ';')) { errors.push({ line: t.line, col: t.col, raw: "Missing ';' after '" + t.value + "'", type: 'ParseError' }); syncTo(SYNC_STMT); } return n;
     }
-    if (t.value === 'struct' || t.value === 'union') {
+    const isStructDefOrForward = (t.value === 'struct' || t.value === 'union' || t.value === 'enum') && (
+      tokens[pos + 1]?.value === '{' ||
+      (tokens[pos + 1]?.type === TT.IDENTIFIER && (tokens[pos + 2]?.value === '{' || tokens[pos + 2]?.value === ';'))
+    );
+    if (isStructDefOrForward) {
       adv(); const n = { kind: 'StructDecl', structKind: t.value, line: t.line, fields: [] };
-      if (cur().type === TT.IDENTIFIER) n.name = adv().value;
+      if (cur().type === TT.IDENTIFIER) {
+        n.name = adv().value;
+        if (t.value === 'enum') knownTypes.add('enum ' + n.name);
+        else knownTypes.add(t.value + ' ' + n.name);
+      }
       if (chk(TT.PUNCTUATION, '{')) {
         adv();
-        while (!chk(TT.PUNCTUATION, '}') && !chk(TT.EOF)) {
-          const ft = parseType();
-          if (ft && cur().type === TT.IDENTIFIER) {
-            const fn = adv().value; let arrSize = null;
-            if (chk(TT.PUNCTUATION, '[')) { adv(); arrSize = chk(TT.PUNCTUATION, ']') ? null : parseExpr(); expect(TT.PUNCTUATION, ']'); }
-            n.fields.push({ type: ft, name: fn, arrSize, line: cur().line });
-            if (!consume(TT.PUNCTUATION, ';')) { errors.push({ line: cur().line, col: cur().col, raw: "Missing ';' after struct field '" + fn + "'", type: 'ParseError' }); syncTo(SYNC_STMT); }
-          } else { syncTo(SYNC_STMT); }
+        if (t.value === 'enum') {
+          let enumVal = 0;
+          while (!chk(TT.PUNCTUATION, '}') && !chk(TT.EOF)) {
+            if (cur().type === TT.IDENTIFIER) {
+              const idTok = adv();
+              let valNode = null;
+              if (consume(TT.OPERATOR, '=')) {
+                valNode = parseExpr();
+              }
+              n.fields.push({ name: idTok.value, value: valNode, enumVal: enumVal++, line: idTok.line });
+              if (chk(TT.PUNCTUATION, ',')) adv();
+            } else {
+              adv();
+            }
+          }
+          expect(TT.PUNCTUATION, '}');
+        } else {
+          while (!chk(TT.PUNCTUATION, '}') && !chk(TT.EOF)) {
+            const ft = parseType();
+            if (ft && cur().type === TT.IDENTIFIER) {
+              const fn = adv().value; let arrSize = null;
+              if (chk(TT.PUNCTUATION, '[')) { adv(); arrSize = chk(TT.PUNCTUATION, ']') ? null : parseExpr(); expect(TT.PUNCTUATION, ']'); }
+              n.fields.push({ type: ft, name: fn, arrSize, line: cur().line });
+              if (!consume(TT.PUNCTUATION, ';')) { errors.push({ line: cur().line, col: cur().col, raw: "Missing ';' after struct field '" + fn + "'", type: 'ParseError' }); syncTo(SYNC_STMT); }
+            } else { syncTo(SYNC_STMT); }
+          }
+          expect(TT.PUNCTUATION, '}');
         }
-        expect(TT.PUNCTUATION, '}');
       }
       if (cur().type === TT.IDENTIFIER) n.varName = adv().value;
-      if (!consume(TT.PUNCTUATION, ';')) { errors.push({ line: cur().line, col: cur().col, raw: "Missing ';' after struct declaration", type: 'ParseError' }); syncTo(SYNC_STMT); }
+      if (!consume(TT.PUNCTUATION, ';')) { errors.push({ line: cur().line, col: cur().col, raw: "Missing ';' after " + t.value + " declaration", type: 'ParseError' }); syncTo(SYNC_STMT); }
       return n;
     }
     if (t.value === 'typedef') {
@@ -1254,7 +1345,11 @@ function parse(tokens, source = '', prepHeaders = null) {
       continue;
     }
     if (cur().value === 'typedef') { const td = parseStmt(); if (td) ast.children.push(td); continue; }
-    if (cur().value === 'struct' || cur().value === 'union') { const sd = parseStmt(); if (sd) ast.children.push(sd); continue; }
+    const isTopStructDefOrForward = (cur().value === 'struct' || cur().value === 'union' || cur().value === 'enum') && (
+      tokens[pos + 1]?.value === '{' ||
+      (tokens[pos + 1]?.type === TT.IDENTIFIER && (tokens[pos + 2]?.value === '{' || tokens[pos + 2]?.value === ';'))
+    );
+    if (isTopStructDefOrForward) { const sd = parseStmt(); if (sd) ast.children.push(sd); continue; }
     if (cur().value === 'using') {
       const uLine = cur().line;
       const uStart = cur();
@@ -1666,6 +1761,13 @@ function analyze(ast, tokens = [], source = '') {
       case 'InitList':
         if (node.items) node.items.forEach(wExpr);
         return 'InitList';
+      case 'DesignatedInit':
+        if (node.value) wExpr(node.value);
+        return 'unknown';
+      case 'DesignatedInitIndex':
+        if (node.index) wExpr(node.index);
+        if (node.value) wExpr(node.value);
+        return 'unknown';
       default: return 'unknown';
     }
   }
@@ -1692,6 +1794,8 @@ function analyze(ast, tokens = [], source = '') {
       case 'For': push(); wStmt(node.init); wExpr(node.cond); wExpr(node.update); wStmt(node.body); pop(); break;
       case 'Switch': wExpr(node.cond); push(); wStmt(node.body); pop(); break;
       case 'Case': wExpr(node.value); break;
+      case 'Label': decl(node.name, { kind: 'label', type: 'label', line: node.line }); break;
+      case 'Goto': break;
       case 'Block': node.children && node.children.forEach(wStmt); break;
       case 'StructDecl':
         if (node.name && (!node.varName || (node.fields && node.fields.length > 0))) {
