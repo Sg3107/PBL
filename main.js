@@ -563,7 +563,7 @@ function renderAgentReports(orchestration) {
 
   container.innerHTML = html;
 }
-function triggerAutoCorrect() {
+function triggerAutoCorrect(forceDirect = false) {
   if (!codeInput) return;
   const source = codeInput.value;
   if (!source.trim()) {
@@ -579,13 +579,27 @@ function triggerAutoCorrect() {
     result = autoCorrectSourceCode(source, lastCompile);
   }
 
-  if (result.changesMade) {
+  if (!result.changesMade || result.correctedSource === source) {
+    showToast(`✓ Code is already 100% syntactically & semantically valid!`);
+    return;
+  }
+
+  if (forceDirect) {
     codeInput.value = result.correctedSource;
     updateLineNums();
     runCompiler();
     showToast(`✨ Auto-Correct: Repaired ${result.fixesApplied.length} compiler fault(s) in ${currentLang.toUpperCase()} automatically!`);
   } else {
-    showToast(`✓ Code is already 100% syntactically & semantically valid!`);
+    // Open Diff Inspector preview so the user sees all changes before applying!
+    if (typeof openDiffInspector === 'function') {
+      openDiffInspector(result);
+      showToast(`🔍 Previewing ${result.fixesApplied.length} proposed fix(es). Click "✨ Apply Patch to Editor" to confirm.`);
+    } else {
+      codeInput.value = result.correctedSource;
+      updateLineNums();
+      runCompiler();
+      showToast(`✨ Auto-Correct: Repaired ${result.fixesApplied.length} compiler fault(s)!`);
+    }
   }
 }
 

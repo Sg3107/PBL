@@ -413,17 +413,25 @@ Keep it structured, clear, and presentation-ready.`;
   const instance = new DiffInspectorEngine();
 
   if (typeof window !== 'undefined') {
-    window.openDiffInspector = function () {
+    window.openDiffInspector = function (explicitRepaired) {
       const codeInput = document.getElementById('codeInput');
       const source = codeInput ? codeInput.value : '';
       if (!source.trim()) {
         if (typeof showToast === 'function') showToast('Write or load code in the editor first!');
         return;
       }
-      const compileData = typeof lastCompile !== 'undefined' ? lastCompile : null;
-      const repaired = (typeof autoCorrectSourceCode === 'function')
-        ? autoCorrectSourceCode(source, compileData)
-        : { correctedSource: source, fixesApplied: [] };
+      let repaired = explicitRepaired;
+      if (!repaired) {
+        const currentLang = (typeof MultiLangEngine !== 'undefined') ? MultiLangEngine.getLanguage() : 'c';
+        if (currentLang !== 'c' && typeof MultiLangEngine !== 'undefined') {
+          repaired = MultiLangEngine.autoCorrect(source, currentLang);
+        } else {
+          const compileData = typeof lastCompile !== 'undefined' ? lastCompile : null;
+          repaired = (typeof autoCorrectSourceCode === 'function')
+            ? autoCorrectSourceCode(source, compileData)
+            : { correctedSource: source, fixesApplied: [] };
+        }
+      }
 
       instance.open(source, repaired);
     };
